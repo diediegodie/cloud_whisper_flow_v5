@@ -1,0 +1,7 @@
+{
+    "source_language": "pt",
+    "target_language": "en",
+    "translation_enabled": true,
+    "auto_stop_seconds": 8,
+    "vosk_model_path": "tts_model"
+}
