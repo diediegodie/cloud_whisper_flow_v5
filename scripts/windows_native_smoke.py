@@ -13,6 +13,11 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    import winsound
+except ImportError:
+    winsound = None
+
 import numpy as np
 import sounddevice as sd
 
@@ -74,6 +79,15 @@ def _run_recording_cycle(
     stt_service: SpeechToTextService,
     translator: TranslatorService,
 ) -> tuple[bool, str]:
+    beep = getattr(winsound, "Beep", None)
+    if callable(beep):
+        beep(1200, 300)
+
+    print(
+        f"START: Attempt {attempt} is beginning. Speak now for "
+        f"{duration_seconds} seconds...",
+        flush=True,
+    )
     try:
         audio_service.start_recording()
         time.sleep(duration_seconds)
@@ -89,7 +103,13 @@ def _run_recording_cycle(
     except SpeechToTextError as exc:
         return False, f"Attempt {attempt}: STT failure -> {exc}"
 
+    if text.strip() == "":
+        return False, f"Attempt {attempt}: STT returned empty text."
+
     translated = translator.translate(text)
+    if translated.strip() == "":
+        return False, f"Attempt {attempt}: translation returned empty text."
+
     summary = {
         "attempt": attempt,
         "samples": int(audio.size),
