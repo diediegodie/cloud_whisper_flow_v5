@@ -21,4 +21,4 @@ DEFAULT_TARGET_LANGUAGE = "en"
 DEFAULT_AUTO_STOP_SECONDS = 8
 
 # Default relative path for the bundled Vosk model directory.
-DEFAULT_VOSK_MODEL_PATH = "tts_model"
+DEFAULT_VOSK_MODEL_PATH = "stt_model/vosk-model-small-pt-0.3/vosk-model-small-pt-0.3"

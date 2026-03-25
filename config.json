@@ -3,5 +3,5 @@
     "target_language": "en",
     "translation_enabled": true,
     "auto_stop_seconds": 8,
-    "vosk_model_path": "tts_model"
+    "vosk_model_path": "stt_model/vosk-model-small-pt-0.3/vosk-model-small-pt-0.3"
 }
