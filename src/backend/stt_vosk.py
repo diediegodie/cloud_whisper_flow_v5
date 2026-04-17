@@ -14,6 +14,8 @@ from pathlib import Path
 import numpy as np
 from vosk import KaldiRecognizer, Model
 
+from src.core.constants import AUDIO_SAMPLE_RATE
+
 logger = logging.getLogger(__name__)
 
 # Number of PCM bytes fed to the recognizer per iteration.
@@ -38,7 +40,7 @@ class SpeechToTextService:
         print(text)
     """
 
-    def __init__(self, model_path: str, sample_rate: int = 16000) -> None:
+    def __init__(self, model_path: str, sample_rate: int = AUDIO_SAMPLE_RATE) -> None:
         """Load the Vosk model from *model_path*.
 
         Args:

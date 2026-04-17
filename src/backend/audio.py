@@ -12,6 +12,8 @@ from typing import List, Optional
 import numpy as np
 import sounddevice as sd
 
+from src.core.constants import AUDIO_CHANNELS, AUDIO_DTYPE, AUDIO_SAMPLE_RATE
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,9 +38,9 @@ class AudioCaptureService:
 
     def __init__(
         self,
-        sample_rate: int = 16000,
-        channels: int = 1,
-        dtype: str = "float32",
+        sample_rate: int = AUDIO_SAMPLE_RATE,
+        channels: int = AUDIO_CHANNELS,
+        dtype: str = AUDIO_DTYPE,
         device: Optional[int] = None,
     ) -> None:
         """Initialise the service with capture parameters.
