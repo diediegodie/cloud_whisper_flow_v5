@@ -4,6 +4,7 @@ Initializes PySide6 application, services, and main window.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -35,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     """Run the CloudWhisper Lite application."""
+    if os.getenv("WSL_DISTRO_NAME") and not os.getenv("QT_QPA_PLATFORM"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+    logger.info("Effective QT_QPA_PLATFORM=%s", os.getenv("QT_QPA_PLATFORM", "<auto>"))
     logger.info("Creating QApplication...")
     app = QApplication(sys.argv)
 

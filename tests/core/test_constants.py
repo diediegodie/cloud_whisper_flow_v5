@@ -7,12 +7,9 @@ def test_constant_names_and_values_are_correct() -> None:
     """Ensure all required constant values match specification."""
     assert constants.APP_NAME == "Cloud Whisper Flow"
     assert constants.MAIN_WINDOW_TITLE == "Cloud Whisper Flow"
-    assert constants.COMPACT_WINDOW_TITLE == "Cloud Whisper Flow Compact"
 
     assert constants.MAIN_WINDOW_WIDTH == 960
     assert constants.MAIN_WINDOW_HEIGHT == 640
-    assert constants.COMPACT_WINDOW_WIDTH == 360
-    assert constants.COMPACT_WINDOW_HEIGHT == 120
 
     assert constants.DEFAULT_SOURCE_LANGUAGE == "pt"
     assert constants.DEFAULT_TARGET_LANGUAGE == "en"
@@ -26,11 +23,8 @@ def test_constant_names_and_values_are_correct() -> None:
 def test_window_dimensions_and_titles_match_product_requirements() -> None:
     """Validate UI title and size constants used by frontend windows."""
     assert constants.MAIN_WINDOW_TITLE == constants.APP_NAME
-    assert constants.COMPACT_WINDOW_TITLE == f"{constants.APP_NAME} Compact"
-
-    assert constants.MAIN_WINDOW_WIDTH > constants.COMPACT_WINDOW_WIDTH
-    assert constants.MAIN_WINDOW_HEIGHT > constants.COMPACT_WINDOW_HEIGHT
-
+    assert constants.MAIN_WINDOW_WIDTH > 0
+    assert constants.MAIN_WINDOW_HEIGHT > 0
 
 
 def test_defaults_match_config_expectations() -> None:

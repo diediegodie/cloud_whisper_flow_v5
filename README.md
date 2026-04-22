@@ -15,10 +15,6 @@ This repository is organized for clean separation between UI, services, and infr
   - Source/target language selectors
   - Translation enable toggle
   - Auto-stop configuration
-- Compact mode window:
-  - Frameless, always-on-top
-  - Record/Stop and Restore controls
-  - Shared state/controller with main window
 - Offline speech-to-text via Vosk model
 - Optional text translation via deep-translator (GoogleTranslator)
 - Config persistence via `config.json`
@@ -80,7 +76,6 @@ python main.py
 3. Click **Stop Recording**
 4. Wait for transcription in the transcript box
 5. If translation is enabled, translated text is shown
-6. Use **Compact Mode** for minimal always-on-top controls
 
 ## Windows Validation
 

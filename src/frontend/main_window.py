@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QSignalBlocker, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtGui import QTextCursor
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,10 @@ from src.core.constants import (
     MAIN_WINDOW_TITLE,
     MAIN_WINDOW_WIDTH,
     SUPPORTED_UI_LANGUAGES,
-    UI_BUTTON_COMPACT_MODE,
+    UI_BUTTON_CLEAR_TRANSCRIPT,
     UI_BUTTON_START_RECORDING,
     UI_BUTTON_STOP_RECORDING,
+    UI_BUTTON_TRANSLATE,
     UI_CHECKBOX_ENABLE_TRANSLATION,
     UI_COLOR_ERROR,
     UI_GROUP_CONTROLS,
@@ -72,9 +74,6 @@ from src.core.constants import (
 )
 from src.core.view_state import ViewState
 
-if TYPE_CHECKING:
-    from src.frontend.compact_window import CompactWindow
-
 
 @dataclass
 class PipelineResult:
@@ -82,6 +81,7 @@ class PipelineResult:
 
     transcript: str
     translation: str
+    emit_transcript: bool = True
 
 
 class ProcessingWorker(QObject):
@@ -104,10 +104,15 @@ class ProcessingWorker(QObject):
         self._translator_service = translator_service
         self._translation_enabled = translation_enabled
         self._audio_data: Optional[np.ndarray] = None
+        self._preset_transcript: str = ""
 
     def set_audio_data(self, audio_data: Optional[np.ndarray]) -> None:
         """Provide audio payload to be processed by the worker."""
         self._audio_data = audio_data
+
+    def set_transcript(self, text: str) -> None:
+        """Provide a pre-existing transcript to translate directly."""
+        self._preset_transcript = text
 
     @Slot()
     def run(self) -> None:
@@ -117,10 +122,14 @@ class ProcessingWorker(QObject):
         if translation is enabled.
         """
         try:
-            transcript = ""
+            transcript = self._preset_transcript
             translation = ""
 
-            if self._stt_service is not None and self._audio_data is not None:
+            if (
+                not transcript
+                and self._stt_service is not None
+                and self._audio_data is not None
+            ):
                 transcript = self._stt_service.transcribe(self._audio_data)
 
             if self._translation_enabled and transcript:
@@ -128,7 +137,11 @@ class ProcessingWorker(QObject):
                     translation = self._translator_service.translate(transcript)
 
             self.finished.emit(
-                PipelineResult(transcript=transcript, translation=translation)
+                PipelineResult(
+                    transcript=transcript,
+                    translation=translation,
+                    emit_transcript=not bool(self._preset_transcript),
+                )
             )
         except Exception as exc:  # pragma: no cover - defensive UI path
             self.failed.emit(str(exc))
@@ -176,10 +189,20 @@ class FrontendController(QObject):
     def update_source_language(self, language: str) -> None:
         self._config.set(CONFIG_KEY_SOURCE_LANGUAGE, language)
         self._config.save()
+        if self._translator_service is not None:
+            self._translator_service.set_languages(
+                source=language,
+                target=self._translator_service.get_target_language(),
+            )
 
     def update_target_language(self, language: str) -> None:
         self._config.set(CONFIG_KEY_TARGET_LANGUAGE, language)
         self._config.save()
+        if self._translator_service is not None:
+            self._translator_service.set_languages(
+                source=self._translator_service.get_source_language(),
+                target=language,
+            )
 
     def update_translation_enabled(self, enabled: bool) -> None:
         self._config.set(CONFIG_KEY_TRANSLATION_ENABLED, enabled)
@@ -188,6 +211,38 @@ class FrontendController(QObject):
     def update_auto_stop_seconds(self, seconds: int) -> None:
         self._config.set(CONFIG_KEY_AUTO_STOP_SECONDS, seconds)
         self._config.save()
+
+    @Slot(str)
+    def translate_text(self, text: str) -> None:
+        """Translate the given text directly, without recording."""
+        if not text.strip():
+            return
+
+        self.error_changed.emit("")
+        self.status_changed.emit(UI_STATUS_PROCESSING)
+        self._set_state(ViewState.PROCESSING)
+
+        self._start_processing_worker_from_text(text)
+
+    def _start_processing_worker_from_text(self, text: str) -> None:
+        self._thread = QThread()
+        self._worker = ProcessingWorker(
+            stt_service=None,
+            translator_service=self._translator_service,
+            translation_enabled=bool(
+                self._config.get(CONFIG_KEY_TRANSLATION_ENABLED, True)
+            ),
+        )
+        self._worker.set_transcript(text)
+        self._worker.moveToThread(self._thread)
+
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._on_processing_finished)
+        self._worker.failed.connect(self._on_processing_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.start()
 
     @Slot()
     def start_recording(self) -> None:
@@ -244,7 +299,8 @@ class FrontendController(QObject):
 
     @Slot(object)
     def _on_processing_finished(self, result: PipelineResult) -> None:
-        self.transcript_changed.emit(result.transcript)
+        if result.emit_transcript:
+            self.transcript_changed.emit(result.transcript)
         self.translation_changed.emit(result.translation)
         self.status_changed.emit(UI_STATUS_DONE)
         self.error_changed.emit("")
@@ -266,7 +322,6 @@ class MainWindow(QMainWindow):
     def __init__(self, controller: Optional[FrontendController] = None) -> None:
         super().__init__()
         self._controller = controller or FrontendController()
-        self._compact_window: Optional[CompactWindow] = None
 
         self.setWindowTitle(MAIN_WINDOW_TITLE)
         self.resize(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
@@ -296,13 +351,13 @@ class MainWindow(QMainWindow):
 
         self.start_button = QPushButton(UI_BUTTON_START_RECORDING, self)
         self.stop_button = QPushButton(UI_BUTTON_STOP_RECORDING, self)
-        self.compact_button = QPushButton(UI_BUTTON_COMPACT_MODE, self)
+        self.translate_button = QPushButton(UI_BUTTON_TRANSLATE, self)
         self.translation_checkbox = QCheckBox(UI_CHECKBOX_ENABLE_TRANSLATION, self)
         self.translation_checkbox.setChecked(True)
 
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.stop_button)
-        controls_layout.addWidget(self.compact_button)
+        controls_layout.addWidget(self.translate_button)
         controls_layout.addStretch(1)
         controls_layout.addWidget(self.translation_checkbox)
 
@@ -323,18 +378,28 @@ class MainWindow(QMainWindow):
         settings_layout.addRow(UI_LABEL_AUTO_STOP_SECONDS, self.auto_stop_spinbox)
 
         content_group = QGroupBox(UI_GROUP_OUTPUT, self)
-        content_layout = QFormLayout()
+        content_layout = QVBoxLayout()
         content_group.setLayout(content_layout)
 
         self.transcript_text = QTextEdit(self)
         self.translation_text = QTextEdit(self)
-        self.transcript_text.setReadOnly(True)
+        self.transcript_text.setReadOnly(False)
         self.translation_text.setReadOnly(True)
         self.transcript_text.setPlaceholderText(UI_PLACEHOLDER_TRANSCRIPT)
         self.translation_text.setPlaceholderText(UI_PLACEHOLDER_TRANSLATION)
 
-        content_layout.addRow(UI_LABEL_TRANSCRIPT, self.transcript_text)
-        content_layout.addRow(UI_LABEL_TRANSLATION, self.translation_text)
+        transcript_header = QWidget(self)
+        transcript_header_layout = QHBoxLayout(transcript_header)
+        transcript_header_layout.setContentsMargins(0, 0, 0, 0)
+        transcript_header_layout.addWidget(QLabel(UI_LABEL_TRANSCRIPT, self))
+        transcript_header_layout.addStretch(1)
+        self.clear_transcript_button = QPushButton(UI_BUTTON_CLEAR_TRANSCRIPT, self)
+        transcript_header_layout.addWidget(self.clear_transcript_button)
+
+        content_layout.addWidget(transcript_header)
+        content_layout.addWidget(self.transcript_text, 1)
+        content_layout.addWidget(QLabel(UI_LABEL_TRANSLATION, self))
+        content_layout.addWidget(self.translation_text, 1)
 
         self.status_label = QLabel(UI_STATUS_READY, self)
         self.error_label = QLabel("", self)
@@ -352,7 +417,9 @@ class MainWindow(QMainWindow):
     def _bind_signals(self) -> None:
         self.start_button.clicked.connect(self._controller.start_recording)
         self.stop_button.clicked.connect(self._controller.stop_recording)
-        self.compact_button.clicked.connect(self._show_compact_mode)
+        self.translate_button.clicked.connect(
+            lambda: self._controller.translate_text(self.transcript_text.toPlainText())
+        )
 
         self.translation_checkbox.toggled.connect(
             self._controller.update_translation_enabled
@@ -370,11 +437,18 @@ class MainWindow(QMainWindow):
         self._controller.state_changed.connect(self._render_state)
         self._controller.status_changed.connect(self._set_status)
         self._controller.error_changed.connect(self._set_error)
-        self._controller.transcript_changed.connect(self.transcript_text.setPlainText)
+        self.clear_transcript_button.clicked.connect(self.transcript_text.clear)
+        self._controller.transcript_changed.connect(self._append_transcript)
         self._controller.translation_changed.connect(self.translation_text.setPlainText)
 
     def _load_config_values(self) -> None:
         config = get_config()
+        blockers = [
+            QSignalBlocker(self.translation_checkbox),
+            QSignalBlocker(self.source_language_combo),
+            QSignalBlocker(self.target_language_combo),
+            QSignalBlocker(self.auto_stop_spinbox),
+        ]
         self.translation_checkbox.setChecked(
             bool(config.get(CONFIG_KEY_TRANSLATION_ENABLED, True))
         )
@@ -389,6 +463,7 @@ class MainWindow(QMainWindow):
         self.auto_stop_spinbox.setValue(
             int(config.get(CONFIG_KEY_AUTO_STOP_SECONDS, DEFAULT_AUTO_STOP_SECONDS))
         )
+        del blockers
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:
@@ -401,15 +476,32 @@ class MainWindow(QMainWindow):
         if state == ViewState.IDLE:
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
+            self.translate_button.setEnabled(True)
         elif state == ViewState.RECORDING:
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
+            self.translate_button.setEnabled(False)
         elif state == ViewState.PROCESSING:
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(False)
+            self.translate_button.setEnabled(False)
         elif state == ViewState.ERROR:
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
+            self.translate_button.setEnabled(True)
+
+    @Slot(str)
+    def _append_transcript(self, text: str) -> None:
+        if not text:
+            return
+        cursor = self.transcript_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if not self.transcript_text.toPlainText():
+            cursor.insertText(text)
+        else:
+            cursor.insertText("\n" + text)
+        self.transcript_text.setTextCursor(cursor)
+        self.transcript_text.ensureCursorVisible()
 
     @Slot(str)
     def _set_status(self, text: str) -> None:
@@ -419,17 +511,3 @@ class MainWindow(QMainWindow):
     def _set_error(self, message: str) -> None:
         self.error_label.setText(message)
         self.error_label.setVisible(bool(message))
-
-    @Slot()
-    def _show_compact_mode(self) -> None:
-        """Switch to compact mode window."""
-        from src.frontend.compact_window import CompactWindow
-
-        if self._compact_window is None:
-            self._compact_window = CompactWindow(self._controller, self)
-
-        compact: CompactWindow = self._compact_window  # type: ignore[assignment]
-        compact.show()
-        compact.raise_()
-        compact.activateWindow()
-        self.setWindowState(Qt.WindowState.WindowMinimized)
